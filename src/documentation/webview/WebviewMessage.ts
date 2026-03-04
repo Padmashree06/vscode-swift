@@ -15,7 +15,11 @@
 /**
  * Represents a message that can be sent between the webview and vscode-swift
  */
-export type WebviewMessage = LoadedMessage | RenderedMessage | UpdateContentMessage;
+export type WebviewMessage =
+    | LoadedMessage
+    | RenderedMessage
+    | UpdateContentMessage
+    | OpenSymbolMessage;
 
 /**
  * Sent from the webview to the extension to indicate that the webview has loaded
@@ -24,7 +28,13 @@ export type WebviewMessage = LoadedMessage | RenderedMessage | UpdateContentMess
 export interface LoadedMessage {
     type: "loaded";
 }
-
+/**
+ * Sent from the webview to the extension to request opening a symbol.
+ */
+export interface OpenSymbolMessage {
+    type: "openSymbol";
+    uri: string;
+}
 /**
  * Sent from the webview to the extension to indicate that content has been
  * rendered to the screen.

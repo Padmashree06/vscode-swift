@@ -29,6 +29,11 @@ export enum PreviewEditorConstant {
     UNSUPPORTED_EDITOR_ERROR_MESSAGE = "The active text editor does not support Swift Documentation Live Preview",
 }
 
+interface SymbolLocation {
+    uri: string;
+    range: vscode.Range;
+}
+
 export class DocumentationPreviewEditor implements vscode.Disposable {
     static async create(
         extension: vscode.ExtensionContext,
@@ -100,11 +105,10 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
     private activeTextEditorSelection?: vscode.Selection;
     private subscriptions: vscode.Disposable[] = [];
     private isDisposed: boolean = false;
-
     private disposeEmitter = new vscode.EventEmitter<void>();
     private renderEmitter = new vscode.EventEmitter<void>();
     private updateContentEmitter = new vscode.EventEmitter<WebviewContent>();
-
+    private symbolUriMap = new Map<string, SymbolLocation>();
     private constructor(
         private readonly context: WorkspaceContext,
         private readonly webviewPanel: vscode.WebviewPanel
@@ -163,6 +167,9 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
             case "rendered":
                 this.renderEmitter.fire();
                 break;
+            case "openSymbol":
+                void this.openSymbol(message.uri);
+                break;
         }
     }
 
@@ -215,6 +222,13 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
 
             if (!folderContext) {
                 return;
+            }
+            const text = document.getText();
+            const symbolLinkRegrex = /```([^`]+)```/g;
+            let match: RegExpMatchArray | null;
+            while ((match = symbolLinkRegrex.exec(text)) !== null) {
+                const symbolName = match[1];
+                await this.storeSymbolInformation(symbolName);
             }
 
             const languageClientManager = this.context.languageClientManager.get(folderContext);
@@ -269,6 +283,67 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
         100 /* 10 times per second */,
         { trailing: true }
     );
+
+    private async openSymbol(symbolKey: string) {
+        const cleanKey = symbolKey.replace(/^\//, "");
+        const value = this.symbolUriMap.get(cleanKey);
+        if (!value) {
+            void vscode.window.showInformationMessage(`Symbol "${cleanKey}" not found.`);
+            return;
+        }
+
+        const uri = vscode.Uri.parse(value.uri);
+        const position = new vscode.Position(value.range.start.line, value.range.start.character);
+
+        //Check if file is already open
+        const alreadyOpenEditor = vscode.window.visibleTextEditors.find(
+            editor => editor.document.uri.toString() === uri.toString()
+        );
+
+        let editor: vscode.TextEditor;
+
+        if (alreadyOpenEditor) {
+            editor = alreadyOpenEditor;
+            await vscode.window.showTextDocument(editor.document, {
+                viewColumn: editor.viewColumn,
+                preview: false,
+            });
+        } else {
+            const activeEditor = vscode.window.activeTextEditor;
+            const targetColumn = activeEditor?.viewColumn ?? vscode.ViewColumn.One;
+            const doc = await vscode.workspace.openTextDocument(uri);
+            editor = await vscode.window.showTextDocument(doc, {
+                viewColumn: targetColumn,
+                preview: false,
+            });
+        }
+
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+            new vscode.Range(position, position),
+            vscode.TextEditorRevealType.InCenter
+        );
+    }
+
+    private async storeSymbolInformation(symbolName: string) {
+        const symbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+            "vscode.executeWorkspaceSymbolProvider",
+            symbolName
+        );
+
+        if (!symbols || symbols.length === 0) {
+            return;
+        }
+
+        const match = symbols.find(s => s.name === symbolName);
+
+        if (match) {
+            this.symbolUriMap.set(symbolName, {
+                uri: match.location.uri.toString(),
+                range: match.location.range,
+            });
+        }
+    }
 
     private parseRenderNode(content: string): RenderNode {
         const renderNode: RenderNode = JSON.parse(content);
