@@ -19,6 +19,7 @@ import { RenderNode, WebviewContent, WebviewMessage } from "./WebviewMessage";
 
 // Remove VS Code's default styles as they conflict with swift-docc-render
 document.getElementById("_defaultStyles")?.remove();
+const vscode = acquireVsCodeApi();
 
 // Hook up the automatic theme switching
 const themeObserver = new ThemeObserver();
@@ -26,15 +27,35 @@ themeObserver.updateTheme();
 themeObserver.start();
 
 // Disable clicking on links as they do not work
-const disableLinks = document.createElement("style");
-disableLinks.textContent = `a {
-    pointer-events: none;
-}`;
-document.head.appendChild(disableLinks);
+// const disableLinks = document.createElement("style");
+// disableLinks.textContent = `a {
+//     pointer-events: none;
+// }`;
+// document.head.appendChild(disableLinks);
+
+document.addEventListener("click", e => {
+    const target = e.target as HTMLElement;
+
+    const anchor = target.closest("a");
+    if (!anchor) {
+        return;
+    }
+
+    const uri = anchor.getAttribute("href");
+    if (!uri) {
+        return;
+    }
+
+    vscode.postMessage({
+        type: "openSymbol",
+        uri: uri,
+    });
+
+    e.preventDefault();
+});
 
 // Set up the communication bridges to VS Code and swift-docc-render
 createCommunicationBridge().then(async bridge => {
-    const vscode = acquireVsCodeApi();
     let activeDocumentationPath: string | undefined;
     let contentToApplyOnRender: RenderNode | undefined;
 
