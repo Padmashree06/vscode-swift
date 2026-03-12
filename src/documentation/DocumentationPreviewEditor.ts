@@ -98,9 +98,11 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
             .replace("</head>", `<link href="${codiconsUri}" rel="stylesheet" /></head>`)
             .replace("</body>", `<script src="${scriptURI.toString()}"></script></body>`);
         webviewPanel.webview.html = doccRenderHTML;
-        return new DocumentationPreviewEditor(context, webviewPanel);
-    }
 
+        const editor = new DocumentationPreviewEditor(context, webviewPanel);
+        return editor;
+    }
+    public static readonly instance: DocumentationPreviewEditor;
     private activeTextEditor?: vscode.TextEditor;
     private activeTextEditorSelection?: vscode.Selection;
     private subscriptions: vscode.Disposable[] = [];
@@ -108,7 +110,8 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
     private disposeEmitter = new vscode.EventEmitter<void>();
     private renderEmitter = new vscode.EventEmitter<void>();
     private updateContentEmitter = new vscode.EventEmitter<WebviewContent>();
-    private symbolUriMap = new Map<string, SymbolLocation>();
+    public symbolUriMap = new Map<string, SymbolLocation>();
+    private symbolReferenceMap = new Map<string, vscode.Location[]>();
     private constructor(
         private readonly context: WorkspaceContext,
         private readonly webviewPanel: vscode.WebviewPanel
@@ -198,7 +201,6 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
             void this.convertDocumentation(this.activeTextEditor);
         }
     }
-
     private convertDocumentation = throttle(
         async (textEditor: vscode.TextEditor): Promise<void> => {
             const document = textEditor.document;
@@ -224,10 +226,22 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
                 return;
             }
             const text = document.getText();
-            const symbolLinkRegrex = /```([^`]+)```/g;
+
+            this.symbolReferenceMap.clear();
+            this.symbolUriMap.clear();
+
+            const symbolLinkRegrex = /``([^`]+)``/g;
             let match: RegExpMatchArray | null;
             while ((match = symbolLinkRegrex.exec(text)) !== null) {
                 const symbolName = match[1];
+                const position = document.positionAt(match.index!);
+                const range = new vscode.Range(position, position);
+
+                const location = new vscode.Location(document.uri, range);
+
+                const existing = this.symbolReferenceMap.get(symbolName) || [];
+                existing.push(location);
+                this.symbolReferenceMap.set(symbolName, existing);
                 await this.storeSymbolInformation(symbolName);
             }
 
@@ -285,17 +299,46 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
     );
 
     private async openSymbol(symbolKey: string) {
+        if (symbolKey.startsWith("https://")) {
+            await this.handleWebLink(symbolKey);
+            return;
+        }
+
         const cleanKey = symbolKey.replace(/^\//, "");
         const value = this.symbolUriMap.get(cleanKey);
+
         if (!value) {
-            void vscode.window.showInformationMessage(`Symbol "${cleanKey}" not found.`);
+            const refs = this.symbolReferenceMap.get(cleanKey);
+
+            if (refs && refs.length > 0) {
+                const ref = refs[0];
+
+                const line = ref.range.start.line + 1;
+                const col = ref.range.start.character + 1;
+
+                const terminal =
+                    vscode.window.activeTerminal || vscode.window.createTerminal("Extension Log");
+                terminal.show(true);
+                terminal.sendText(
+                    `Symbol '${cleanKey}' not found.\nReferenced at line ${line}, column ${col} in ${ref.uri}`
+                );
+
+                void vscode.window.showInformationMessage(
+                    `Symbol "${cleanKey}" not found.\nReferenced at line ${line}, column ${col} in ${ref.uri}`
+                );
+
+                await this.openAndReveal(ref.uri, ref.range.start);
+            }
+
             return;
         }
 
         const uri = vscode.Uri.parse(value.uri);
         const position = new vscode.Position(value.range.start.line, value.range.start.character);
 
-        //Check if file is already open
+        await this.openAndReveal(uri, position);
+    }
+    private async openAndReveal(uri: vscode.Uri, position: vscode.Position) {
         const alreadyOpenEditor = vscode.window.visibleTextEditors.find(
             editor => editor.document.uri.toString() === uri.toString()
         );
@@ -311,6 +354,7 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
         } else {
             const activeEditor = vscode.window.activeTextEditor;
             const targetColumn = activeEditor?.viewColumn ?? vscode.ViewColumn.One;
+
             const doc = await vscode.workspace.openTextDocument(uri);
             editor = await vscode.window.showTextDocument(doc, {
                 viewColumn: targetColumn,
@@ -342,6 +386,29 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
                 uri: match.location.uri.toString(),
                 range: match.location.range,
             });
+        }
+    }
+
+    private async handleWebLink(url: string) {
+        const terminal =
+            vscode.window.activeTerminal || vscode.window.createTerminal("Extension Log");
+
+        try {
+            const response = await fetch(url, { method: "HEAD" });
+
+            if (!response.ok) {
+                void vscode.window.showErrorMessage(`Link doe not exist: ${url}`);
+                terminal.show(true);
+                terminal.sendText(`Link does not exist: ${url}`);
+
+                return;
+            }
+
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+        } catch (err) {
+            terminal.show(true);
+            terminal.sendText(`Unable to reach link: ${url}`);
+            void vscode.window.showErrorMessage(`Unable to reach link: ${url}`);
         }
     }
 
