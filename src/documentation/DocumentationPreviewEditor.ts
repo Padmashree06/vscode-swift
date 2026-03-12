@@ -100,9 +100,10 @@ export class DocumentationPreviewEditor implements vscode.Disposable {
         webviewPanel.webview.html = doccRenderHTML;
 
         const editor = new DocumentationPreviewEditor(context, webviewPanel);
+        DocumentationPreviewEditor.instance = editor;
         return editor;
     }
-    public static readonly instance: DocumentationPreviewEditor;
+    public static instance: DocumentationPreviewEditor;
     private activeTextEditor?: vscode.TextEditor;
     private activeTextEditorSelection?: vscode.Selection;
     private subscriptions: vscode.Disposable[] = [];

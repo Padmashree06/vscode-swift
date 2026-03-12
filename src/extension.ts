@@ -46,6 +46,7 @@ import { checkAndWarnAboutWindowsSymlinks } from "./ui/win32";
 import { globDirectory } from "./utilities/filesystem";
 import { getErrorDescription } from "./utilities/utilities";
 import { Version } from "./utilities/version";
+import { registerDocCDefinitionProvider } from "./sourcekit-lsp/extensions";
 
 export interface InternalSwiftExtensionApi extends SwiftExtensionApi {
     workspaceContext?: WorkspaceContext;
@@ -130,6 +131,7 @@ export async function activate(
         context.subscriptions.push(...commands.register(workspaceContext));
         context.subscriptions.push(registerDebugger(workspaceContext));
         context.subscriptions.push(new SelectedXcodeWatcher(logger));
+        context.subscriptions.push(registerDocCDefinitionProvider());
 
         // Register task provider.
         context.subscriptions.push(
